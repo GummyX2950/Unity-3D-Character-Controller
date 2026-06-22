@@ -2,75 +2,218 @@ using UnityEngine;
 
 public class PlayerController : MonoBehaviour
 {
-    public CharacterController cc;
-    [SerializeField] private GameObject player;
-    [SerializeField] private Camera cam;
-    [SerializeField] private float Sensitivity;
-    
-    [SerializeField] private float speed, walk, run, crouch;
+    public CharacterController controller;
+    public Camera playerCamera;
 
-    private Vector3 crouchScale, normalScale;
+    public float speed = 5f;
+    public float mouseSensitivity = 2f;
+    public float gravity = -9.81f;
 
-    public bool isMoving, isCrouching, isRunning;
+    private float xRotation = 0f;
+    private Vector3 velocity;
 
-    private float X, Y;
-
-    private void Start()
+    void Start()
     {
-        speed = walk;
-        crouchScale = new Vector3(1, .75f, 1);
-        normalScale = new Vector3(1, 1, 1);
-        cc = GetComponent<CharacterController>();
-        cc.enabled = true;
         Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
     }
-    private void Update()
+
+    void Update()
     {
-        #region Camera Limitation Calculator
-        //Camera limitation variables
-        const float MIN_Y = -60.0f;
-        const float MAX_Y = 70.0f;
+        MovePlayer();
+        LookAround();
+    }
 
-        X += Input.GetAxis("Mouse X") * (Sensitivity * Time.deltaTime);
-        Y -= Input.GetAxis("Mouse Y") * (Sensitivity * Time.deltaTime);
+    void MovePlayer()
+    {
+        float x = Input.GetAxis("Horizontal");
+        float z = Input.GetAxis("Vertical");
 
-        if (Y < MIN_Y)
-            Y = MIN_Y;
-        else if (Y > MAX_Y)
-            Y = MAX_Y;
-        #endregion
-        transform.localRotation = Quaternion.Euler(Y, X, 0.0f);
+        Vector3 move = transform.right * x + transform.forward * z;
+        controller.Move(move * speed * Time.deltaTime);
 
-        float horizontal = Input.GetAxis("Horizontal");
-        float vertical = Input.GetAxis("Vertical");
-        Vector3 forward = transform.forward * vertical;
-        Vector3 right = transform.right * horizontal;
+        velocity.y += gravity * Time.deltaTime;
+        controller.Move(velocity * Time.deltaTime);
+    }
 
-        cc.SimpleMove(Vector3.Normalize(forward + right) * speed);
-        // Determines if the speed = run or walk
-        if (Input.GetKey(KeyCode.LeftShift))
+    void LookAround()
+    {
+        float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity;
+        float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity;
+
+        xRotation -= mouseY;
+        xRotation = Mathf.Clamp(xRotation, -80f, 80f);
+
+        playerCamera.transform.localRotation = Quaternion.Euler(xRotation, 0, 0);
+        transform.Rotate(Vector3.up * mouseX);
+    }
+}using UnityEngine;
+
+public class GrabHand : MonoBehaviour
+{
+    public Camera cam;
+    public Transform handPoint;
+    public float grabDistance = 15f;
+    public LineRenderer line;
+
+    private Rigidbody grabbedObject;
+
+    void Update()
+    {
+        if (Input.GetMouseButtonDown(0))
         {
-            speed = run;
-            isRunning = true;
+            TryGrab();
         }
-        //Crouch
-        else if (Input.GetKey(KeyCode.LeftControl))
+
+        if (Input.GetMouseButton(0) && grabbedObject != null)
         {
-            isCrouching = true;
-            isRunning = false;
-            speed = crouch;
-            player.transform.localScale = crouchScale;
+            HoldObject();
+        }
+
+        if (Input.GetMouseButtonUp(0))
+        {
+            ReleaseObject();
+        }
+    }
+
+    void TryGrab()
+    {
+        Ray ray = new Ray(cam.transform.position, cam.transform.forward);
+
+        if (Physics.Raycast(ray, out RaycastHit hit, grabDistance))
+        {
+            if (hit.collider.CompareTag("Grabbable"))
+            {
+                grabbedObject = hit.collider.GetComponent<Rigidbody>();
+                grabbedObject.useGravity = false;
+
+                line.enabled = true;
+            }
+        }
+    }
+
+    void HoldObject()
+    {
+        grabbedObject.MovePosition(handPoint.position);
+
+        line.SetPosition(0, transform.position);
+        line.SetPosition(1, grabbedObject.position);
+    }
+
+    void ReleaseObject()
+    {
+        if (grabbedObject != null)
+        {
+            grabbedObject.useGravity = true;
+            grabbedObject = null;
+        }
+
+        line.enabled = false;
+    }
+}using UnityEngine;
+
+public class DoorController : MonoBehaviour
+{
+    public bool needsKeycard = true;
+    public bool playerHasKeycard = false;
+    public float openAngle = 90f;
+    public float openSpeed = 3f;
+
+    private bool isOpen = false;
+    private Quaternion closedRotation;
+    private Quaternion openRotation;
+
+    void Start()
+    {
+        closedRotation = transform.rotation;
+        openRotation = Quaternion.Euler(transform.eulerAngles + new Vector3(0, openAngle, 0));
+    }
+
+    void Update()
+    {
+        if (isOpen)
+            transform.rotation = Quaternion.Slerp(transform.rotation, openRotation, Time.deltaTime * openSpeed);
+        else
+            transform.rotation = Quaternion.Slerp(transform.rotation, closedRotation, Time.deltaTime * openSpeed);
+    }
+
+    public void TryOpen()
+    {
+        if (!needsKeycard || playerHasKeycard)
+        {
+            isOpen = true;
         }
         else
         {
-            isRunning = false;
-            isCrouching = false;
-            speed = walk;
-            player.transform.localScale = normalScale;
+            Debug.Log("Door locked. Find the keycard.");
         }
-        // Detects if the player is moving.
-        // Useful if you want footstep sounds and or other features in your game.
-        isMoving = cc.velocity.sqrMagnitude > 0.0f;
+    }
+}using UnityEngine;
+
+public class KeycardPickup : MonoBehaviour
+{
+    public DoorController door;
+
+    void OnTriggerEnter(Collider other)
+    {
+        if (other.CompareTag("Player"))
+        {
+            door.playerHasKeycard = true;
+            Destroy(gameObject);
+            Debug.Log("Keycard collected.");
+        }
+    }
+}using UnityEngine;
+using UnityEngine.AI;
+
+public class MonsterAI : MonoBehaviour
+{
+    public Transform player;
+    public float detectionRange = 15f;
+    public float attackRange = 2f;
+
+    private NavMeshAgent agent;
+
+    void Start()
+    {
+        agent = GetComponent<NavMeshAgent>();
+    }
+
+    void Update()
+    {
+        float distance = Vector3.Distance(transform.position, player.position);
+
+        if (distance <= detectionRange)
+        {
+            agent.SetDestination(player.position);
+        }
+
+        if (distance <= attackRange)
+        {
+            Debug.Log("Game Over");
+        }
+    }
+}using UnityEngine;
+
+public class Interact : MonoBehaviour
+{
+    public Camera cam;
+    public float interactDistance = 4f;
+
+    void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.E))
+        {
+            Ray ray = new Ray(cam.transform.position, cam.transform.forward);
+
+            if (Physics.Raycast(ray, out RaycastHit hit, interactDistance))
+            {
+                DoorController door = hit.collider.GetComponent<DoorController>();
+
+                if (door != null)
+                {
+                    door.TryOpen();
+                }
+            }
+        }
     }
 }
